@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gesture Chord Player</title>
+    <!-- Tone.js untuk Audio -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            background-color: #111;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow: hidden;
+            color: white;
+        }
+
+        /* Container Kamera & Canvas */
+        #video-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1;
+        }
+        
+        video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transform: scaleX(-1); /* Mirrored */
+        }
+
+        canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 2;
+            pointer-events: none; /* Supaya klik tembus ke UI jika ada */
+        }
+
+        /* UI Overlays */
+        #ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 10;
+            pointer-events: none;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+        }
+
+        /* Top Info / Chord Display */
+        #chord-display {
+            background: rgba(0, 0, 0, 0.6);
+            backdrop-filter: blur(10px);
+            padding: 15px 30px;
+            border-radius: 20px;
+            text-align: center;
+            margin: 20px auto;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            pointer-events: auto;
+        }
+
+        #chord-name {
+            font-size: 2rem;
+            font-weight: bold;
+            margin: 0;
+            color: #00ffff;
+        }
+
+        #chord-notes {
+            font-size: 1rem;
+            color: #aaa;
+            margin-top: 5px;
+        }
+
+        #status-msg {
+            color: #ffaa00;
+            font-size: 0.9rem;
+            margin-top: 5px;
+        }
+
+        /* Bottom Control Panel */
+        #control-panel {
+            background: rgba(0, 0, 0, 0.7);
+            backdrop-filter: blur(15px);
+            padding: 15px 20px;
+            display: flex;
+            gap: 15px;
+            justify-content: center;
+            align-items: center;
+            pointer-events: auto;
+            border-top: 1px solid rgba(255, 255, 255, 0.2);
+            flex-wrap: wrap;
+        }
+
+        .control-group {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        label {
+            font-size: 0.85rem;
+            color: #ccc;
+        }
+
+        select, input[type="range"], button {
+            background: rgba(255, 255, 255, 0.1);
+            color: white;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            padding: 5px 10px;
+            border-radius: 8px;
+            font-family: inherit;
+            outline: none;
+        }
+
+        button {
+            cursor: pointer;
+            font-weight: bold;
+            transition: 0.2s;
+        }
+
+        button:hover {
+            background: rgba(0, 255, 255, 0.3);
+            border-color: #00ffff;
+        }
+
+        button.active {
+            background: #00ffff;
+            color: black;
+        }
+
+        /* Loading Screen */
+        #loading {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: #111;
+            z-index: 100;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+            color: white;
+        }
+        .spinner {
+            width: 50px; height: 50px;
+            border: 5px solid rgba(255,255,255,0.1);
+            border-top-color: #00ffff;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-bottom: 20px;
+        }
+        @keyframes spin { 100% { transform: rotate(360deg); } }
+
+    </style>
+</head>
+<body>
+
+    <div id="loading">
+        <div class="spinner"></div>
+        <h2 id="loading-text">Memuat Model AI MediaPipe...</h2>
+        <p>Pastikan Anda memberikan izin akses kamera.</p>
+    </div>
+
+    <div id="video-container">
+        <video id="webcam" autoplay playsinline></video>
+        <canvas id="output_canvas"></canvas>
+    </div>
+
+    <div id="ui-layer">
+        <div id="chord-display">
+            <div id="chord-name">Menunggu...</div>
+            <div id="chord-notes">-</div>
+            <div id="status-msg">Tekan Start Audio & Angkat Kedua Tangan</div>
+        </div>
+
+        <div id="control-panel">
+            <div class="control-group">
+                <button id="btn-audio">Start Audio</button>
+            </div>
+            
+            <div class="control-group">
+                <label>Scale:</label>
+                <select id="sel-scale">
+                    <option value="Diatonic C">Diatonic C</option>
+                    <option value="Diatonic D">Diatonic D</option>
+                    <option value="Diatonic E">Diatonic E</option>
+                    <option value="Diatonic F">Diatonic F</option>
+                    <option value="Diatonic G">Diatonic G</option>
+                    <option value="Diatonic A">Diatonic A</option>
+                    <option value="Diatonic B">Diatonic B</option>
+                    <option value="Chromatic">Chromatic (12 Note)</option>
+                </select>
+            </div>
+
+            <div class="control-group">
+                <label>Wave:</label>
+                <select id="sel-wave">
+                    <option value="sine">Sine</option>
+                    <option value="triangle">Triangle</option>
+                    <option value="square">Square</option>
+                    <option value="sawtooth">Sawtooth</option>
+                </select>
+            </div>
+
+            <div class="control-group">
+                <label>Octave:</label>
+                <select id="sel-octave">
+                    <option value="3">Octave 3</option>
+                    <option value="4" selected>Octave 4</option>
+                    <option value="5">Octave 5</option>
+                </select>
+            </div>
+
+            <div class="control-group">
+                <label>Vol:</label>
+                <input type="range" id="slider-vol" min="-40" max="0" value="-10">
+            </div>
+        </div>
+    </div>
+
+    <!-- MediaPipe Tasks Vision (ES Module) -->
+    <script type="module">
+        import {
+            HandLandmarker,
+            FilesetResolver
+        } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/vision_bundle.js";
+
+        // === KONFIGURASI MUSIK & TANGGA NADA ===
+        const SCALES = {
+            "Diatonic C": ["C", "D", "E", "F", "G", "A", "B"],
+            "Diatonic D": ["D", "E", "F#", "G", "A", "B", "C#"],
+            "Diatonic E": ["E", "F#", "G#", "A", "B", "C#", "D#"],
+            "Diatonic F": ["F", "G", "A", "Bb", "C", "D", "E"],
+            "Diatonic G": ["G", "A", "B", "C", "D", "E", "F#"],
+            "Diatonic A": ["A", "B", "C#", "D", "E", "F#", "G#"],
+            "Diatonic B": ["B", "C#", "D#", "E", "F#", "G#", "A#"],
+            "Chromatic":  ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+        };
+
+        const CHORD_TYPES = [
+            { label: "maj", intervals: [0, 4, 7] },
+            { label: "m", intervals: [0, 3, 7] },
+            { label: "7", intervals: [0, 4, 7, 10] },
+            { label: "maj7", intervals: [0, 4, 7, 11] },
+            { label: "m7", intervals: [0, 3, 7, 10] },
+            { label: "dim", intervals: [0, 3, 6] },
+            { label: "aug", intervals: [0, 4, 8] },
+            { label: "sus4", intervals: [0, 5, 7] }
+        ];
+
+        let currentScaleNotes = SCALES["Diatonic C"];
+        let baseOctave = 4;
+
+        // State Aplikasi
+        let audioEnabled = false;
+        let isPlaying = false;
+        let currentRoot = null;
+        let currentType = null;
+        let activeFingers = { left: null, right: null }; 
+        let sustainTimer = null;
+        const GRACE_PERIOD_MS = 600; // Toleransi waktu jika kamera hilang deteksi sebentar
+
+        // === TONE.JS AUDIO ENGINE ===
+        const synth = new Tone.PolySynth(Tone.Synth, {
+            oscillator: { type: "sine" },
+            envelope: {
+                attack: 0.05,
+                decay: 0.2,
+                sustain: 0.8,
+                release: 1.5
+            }
+        }).toDestination();
+        
+        synth.volume.value = -10;
+
+        function getNotesFromChord(rootNote, intervals) {
+            if (!rootNote) return [];
+            // Gunakan library Tone.Frequency untuk menghitung interval dengan mudah
+            const baseFreq = Tone.Frequency(`${rootNote}${baseOctave}`);
+            return intervals.map(interval => baseFreq.transpose(interval).toNote());
+        }
+
+        function updateChordAudio() {
+            if (!audioEnabled) return;
+
+            if (activeFingers.left !== null && activeFingers.right !== null) {
+                const newRoot = currentScaleNotes[activeFingers.left];
+                const typeObj = CHORD_TYPES[activeFingers.right];
+                const newType = typeObj.label;
+
+                // Jika kombinasi berubah
+                if (currentRoot !== newRoot || currentType !== newType || !isPlaying) {
+                    currentRoot = newRoot;
+                    currentType = newType;
+                    const notes = getNotesFromChord(currentRoot, typeObj.intervals);
+                    
+                    document.getElementById("chord-name").innerText = `${currentRoot} ${currentType}`;
+                    document.getElementById("chord-notes").innerText = notes.join(" - ");
+                    
+                    // Mainkan chord baru & tahan (Sustain)
+                    synth.releaseAll();
+                    synth.triggerAttack(notes);
+                    isPlaying = true;
+                    
+                    if (sustainTimer) clearTimeout(sustainTimer);
+                }
+            } else {
+                // Jika salah satu tangan hilang, jalankan timer grace period
+                if (isPlaying && !sustainTimer) {
+                    sustainTimer = setTimeout(() => {
+                        stopAudio();
+                    }, GRACE_PERIOD_MS);
+                }
+            }
+        }
+
+        function stopAudio() {
+            synth.releaseAll();
+            isPlaying = false;
+            currentRoot = null;
+            currentType = null;
+            document.getElementById("chord-name").innerText = "Menunggu...";
+            document.getElementById("chord-notes").innerText = "-";
+            if(sustainTimer) { clearTimeout(sustainTimer); sustainTimer = null; }
+        }
+
+        // === UI KONTROL ===
+        document.getElementById("btn-audio").addEventListener("click", async (e) => {
+            await Tone.start();
+            audioEnabled = !audioEnabled;
+            if (audioEnabled) {
+                e.target.innerText = "Stop Audio";
+                e.target.classList.add("active");
+                document.getElementById("status-msg").innerText = "Audio Aktif. Gunakan kedua tangan.";
+            } else {
+                e.target.innerText = "Start Audio";
+                e.target.classList.remove("active");
+                stopAudio();
+                document.getElementById("status-msg").innerText = "Audio Mati.";
+            }
+        });
+
+        document.getElementById("sel-scale").addEventListener("change", (e) => {
+            currentScaleNotes = SCALES[e.target.value];
+            stopAudio(); // Reset audio saat ganti scale
+        });
+
+        document.getElementById("sel-wave").addEventListener("change", (e) => {
+            synth.set({ oscillator: { type: e.target.value } });
+        });
+
+        document.getElementById("sel-octave").addEventListener("change", (e) => {
+            baseOctave = parseInt(e.target.value);
+            stopAudio();
+        });
+
+        document.getElementById("slider-vol").addEventListener("input", (e) => {
+            synth.volume.value = parseFloat(e.target.value);
+        });
+
+        // === MEDIAPIPE & CANVAS SETUP ===
+        const video = document.getElementById("webcam");
+        const canvas = document.getElementById("output_canvas");
+        const ctx = canvas.getContext("2d");
+        
+        let handLandmarker;
+        let lastVideoTime = -1;
+
+        async function initMediaPipe() {
+            const vision = await FilesetResolver.forVisionTasks(
+                "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/wasm"
+            );
+            handLandmarker = await HandLandmarker.createFromOptions(vision, {
+                baseOptions: {
+                    modelAssetPath: `https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task`,
+                    delegate: "GPU"
+                },
+                runningMode: "VIDEO",
+                numHands: 2,
+                minHandDetectionConfidence: 0.5,
+                minHandPresenceConfidence: 0.5,
+                minTrackingConfidence: 0.5
+            });
+            
+            startCamera();
+        }
+
+        function startCamera() {
+            navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 720 }, audio: false })
+                .then((stream) => {
+                    video.srcObject = stream;
+                    video.addEventListener("loadeddata", () => {
+                        document.getElementById("loading").style.display = "none";
+                        canvas.width = video.videoWidth;
+                        canvas.height = video.videoHeight;
+                        predictWebcam();
+                    });
+                })
+                .catch((err) => {
+                    document.getElementById("loading-text").innerText = "Gagal mengakses kamera.";
+                    console.error(err);
+                });
+        }
+
+        // === LOGIKA GAMBAR LINGKARAN & SEKTOR ===
+        // Geometri Lingkaran
+        const WHEEL_RADIUS = 180;
+        const WHEEL_INNER_RADIUS = 60;
+        
+        function drawWheel(ctx, x, y, radius, items, activeIndex) {
+            const angleStep = (Math.PI * 2) / items.length;
+            
+            // Background Lingkaran Utama
+            ctx.beginPath();
+            ctx.arc(x, y, radius, 0, Math.PI * 2);
+            ctx.fillStyle = "rgba(0, 0, 0, 0.5)";
+            ctx.fill();
+            ctx.lineWidth = 2;
+            ctx.strokeStyle = "rgba(255, 255, 255, 0.3)";
+            ctx.stroke();
+
+            // Gambar Sektor
+            for (let i = 0; i < items.length; i++) {
+                const startAngle = i * angleStep - Math.PI / 2 - angleStep / 2;
+                const endAngle = startAngle + angleStep;
+                
+                ctx.beginPath();
+                ctx.moveTo(x, y);
+                ctx.arc(x, y, radius, startAngle, endAngle);
+                ctx.closePath();
+
+                if (i === activeIndex) {
+                    ctx.fillStyle = "rgba(0, 255, 255, 0.4)";
+                    ctx.fill();
+                }
+
+                ctx.stroke();
+
+                // Teks Label
+                const textAngle = i * angleStep - Math.PI / 2;
+                const textX = x + Math.cos(textAngle) * (radius * 0.65);
+                const textY = y + Math.sin(textAngle) * (radius * 0.65);
+                
+                ctx.fillStyle = i === activeIndex ? "#00ffff" : "white";
+                ctx.font = "bold 20px Arial";
+                ctx.textAlign = "center";
+                ctx.textBaseline = "middle";
+                ctx.fillText(items[i].label || items[i], textX, textY);
+            }
+            
+            // Lubang Tengah
+            ctx.beginPath();
+            ctx.arc(x, y, WHEEL_INNER_RADIUS, 0, Math.PI * 2);
+            ctx.fillStyle = "#111";
+            ctx.fill();
+            ctx.stroke();
+        }
+
+        function getHoveredSector(x, y, wheelX, wheelY, numSectors) {
+            const dx = x - wheelX;
+            const dy = y - wheelY;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+            
+            if (distance > WHEEL_INNER_RADIUS && distance < WHEEL_RADIUS) {
+                let angle = Math.atan2(dy, dx) + Math.PI / 2;
+                if (angle < 0) angle += Math.PI * 2;
+                
+                const angleStep = (Math.PI * 2) / numSectors;
+                // Shift angle setengah langkah agar label tepat di tengah sektor
+                angle = (angle + angleStep / 2) % (Math.PI * 2); 
+                
+                return Math.floor(angle / angleStep);
+            }
+            return null;
+        }
+
+        // === RENDER LOOP ===
+        function predictWebcam() {
+            canvas.width = video.clientWidth;
+            canvas.height = video.clientHeight;
+            
+            const w = canvas.width;
+            const h = canvas.height;
+            
+            // Posisi Roda
+            const leftWheelX = w * 0.25;
+            const leftWheelY = h * 0.5;
+            const rightWheelX = w * 0.75;
+            const rightWheelY = h * 0.5;
+
+            // Hapus canvas
+            ctx.clearRect(0, 0, w, h);
+
+            let startTimeMs = performance.now();
+            if (lastVideoTime !== video.currentTime) {
+                lastVideoTime = video.currentTime;
+                const results = handLandmarker.detectForVideo(video, startTimeMs);
+                
+                let detectedLeft = null;
+                let detectedRight = null;
+
+                if (results.landmarks) {
+                    for (let n = 0; n < results.landmarks.length; n++) {
+                        const landmarks = results.landmarks[n];
+                        
+                        // Landmark 8 adalah ujung telunjuk (Index Finger Tip)
+                        const indexTip = landmarks[8];
+                        
+                        // Karena video di-mirror, koordinat X dibalik
+                        const x = (1 - indexTip.x) * w; 
+                        const y = indexTip.y * h;
+
+                        // Gambar penanda telunjuk (Neon Dot)
+                        ctx.beginPath();
+                        ctx.arc(x, y, 10, 0, 2 * Math.PI);
+                        ctx.fillStyle = "#00ffff";
+                        ctx.shadowBlur = 15;
+                        ctx.shadowColor = "#00ffff";
+                        ctx.fill();
+                        ctx.shadowBlur = 0; // reset
+                        
+                        // Deteksi interaksi dengan roda (Asumsi: Tangan di kiri layar mengontrol roda kiri)
+                        if (x < w / 2) {
+                            detectedLeft = getHoveredSector(x, y, leftWheelX, leftWheelY, currentScaleNotes.length);
+                        } else {
+                            detectedRight = getHoveredSector(x, y, rightWheelX, rightWheelY, CHORD_TYPES.length);
+                        }
+                    }
+                }
+                
+                // Update state aktif
+                activeFingers.left = detectedLeft;
+                activeFingers.right = detectedRight;
+                
+                // Update Audio
+                updateChordAudio();
+            }
+
+            // Gambar kedua roda UI
+            drawWheel(ctx, leftWheelX, leftWheelY, WHEEL_RADIUS, currentScaleNotes, activeFingers.left);
+            drawWheel(ctx, rightWheelX, rightWheelY, WHEEL_RADIUS, CHORD_TYPES, activeFingers.right);
+
+            window.requestAnimationFrame(predictWebcam);
+        }
+
+        // Mulai Inisialisasi
+        initMediaPipe();
+
+    </script>
+</body>
+</html>
